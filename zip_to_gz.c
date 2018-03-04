@@ -46,6 +46,11 @@ struct gz_header
 	uint8_t  os;
 };
 
+
+#define ZIP_CD_MAGIC   0x02014b50
+#define ZIP_EOCD_MAGIC 0x06054b50
+
+
 struct zip_directory
 {
 	uint32_t magic;
@@ -91,7 +96,6 @@ struct zip_directory
 46+n 	m 	Extra field
 46+n+m 	k 	File comment
 * */
-#define ZIP_EOCD_MAGIC 0x06054b50
 struct zip_eocd
 {
 	uint32_t magic;
@@ -114,8 +118,10 @@ int validate_eocd(struct zip_eocd *eocd, uint32_t offset)
 
 int main(int argc, char **argv)
 {
+	int i;
 	int fd[2];
 	uint32_t offset = 0;
+	unsigned char fname[512];
 
 	struct stat stats[2];
 
@@ -126,8 +132,10 @@ int main(int argc, char **argv)
 	fstat(fd[1], &stats[1]);
 
 	lseek(fd[0], -22, SEEK_END);
+	struct zip_directory zip_dir = {0};
 	struct zip_eocd zip_footer = {0};
 
+	// Locate the End of Central Directory header (located at the end of the file)
 	offset = 22;
 	while (!validate_eocd(&zip_footer, offset))
 	{
@@ -135,6 +143,30 @@ int main(int argc, char **argv)
 		lseek(fd[0], -23, SEEK_CUR);
 		offset += 1;
 	}
+
+	// Jump to the beginning of the Central Directories
+	lseek(fd[0], zip_footer.central_dir_offset, SEEK_SET);
+
+	// Iterate through all the Central Directories
+	for (i = 0; i < zip_footer.total_central_records; i++)
+	{
+		read(fd[0], &zip_dir, 46);
+		if (zip_dir.magic == ZIP_CD_MAGIC) // Just for sanity
+		{
+			read(fd[0], &fname, zip_dir.fname_len);
+			fname[zip_dir.fname_len] = 0;
+			write(1, fname, zip_dir.fname_len);
+			write(1, "\n", 1);
+			lseek(fd[0], zip_dir.offset, SEEK_SET);
+			unsigned char buffer[zip_dir.zip_size];
+			read(fd[0], buffer, zip_dir.zip_size);
+			int zfd = open(fname, O_WRONLY, 0);
+			write(zfd, buffer, zip_dir.zip_size);
+			close(zfd);
+		}
+		lseek(fd[0], zip_dir.extra_len + zip_dir.comment_len, SEEK_CUR);
+	}
+
 	write(1, "It's a zip\n", 11);
-	printf("Offset from end: %d\nComment: %d bytes\n", offset, zip_footer.comment_len);
 }
+
