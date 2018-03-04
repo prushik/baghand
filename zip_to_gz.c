@@ -8,6 +8,34 @@
 #include <unistd.h>
 #include <fcntl.h>
 
+#define GZ_FLAGS_ENCRYPTED  0
+#define GZ_FLAGS_RESTRICTED 0
+#define GZ_FLAGS_EXTRA      0
+#define GZ_FLAGS_HEADER_CRC 0
+#define GZ_FLAGS_NAME_TRUNC 0
+
+//wow, I didn't realize tarball headers were so huge
+struct tar_posix_header
+{                                 /* byte offset */
+	char name[100];               /*   0 */
+	char mode[8];                 /* 100 */
+	char uid[8];                  /* 108 */
+	char gid[8];                  /* 116 */
+	char size[12];                /* 124 */
+	char mtime[12];               /* 136 */
+	char chksum[8];               /* 148 */
+	char typeflag;                /* 156 */
+	char linkname[100];           /* 157 */
+	char magic[6];                /* 257 */
+	char version[2];              /* 263 */
+	char uname[32];               /* 265 */
+	char gname[32];               /* 297 */
+	char devmajor[8];             /* 329 */
+	char devminor[8];             /* 337 */
+	char prefix[155];             /* 345 */
+								  /* 500 */
+};
+
 struct gz_header
 {
 	uint16_t magic;
@@ -81,12 +109,13 @@ struct zip_eocd
 // the eocd structure has been located
 int validate_eocd(struct zip_eocd *eocd, uint32_t offset)
 {
-	
+	return (eocd->magic == ZIP_EOCD_MAGIC) && ((offset-23) == eocd->comment_len);
 }
 
 int main(int argc, char **argv)
 {
 	int fd[2];
+	uint32_t offset = 0;
 
 	struct stat stats[2];
 
@@ -99,10 +128,13 @@ int main(int argc, char **argv)
 	lseek(fd[0], -22, SEEK_END);
 	struct zip_eocd zip_footer = {0};
 
-	while (zip_footer.magic != ZIP_EOCD_MAGIC)
+	offset = 22;
+	while (!validate_eocd(&zip_footer, offset))
 	{
-		read(fd[0], &zip_footer, 4);
-		lseek(fd[0], -5, SEEK_CUR);
+		read(fd[0], &zip_footer, 22);
+		lseek(fd[0], -23, SEEK_CUR);
+		offset += 1;
 	}
-	write(1, "Its a zip\n", 10);
+	write(1, "It's a zip\n", 11);
+	printf("Offset from end: %d\nComment: %d bytes\n", offset, zip_footer.comment_len);
 }
