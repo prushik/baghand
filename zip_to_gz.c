@@ -8,33 +8,38 @@
 #include <unistd.h>
 #include <fcntl.h>
 
-#define GZ_FLAGS_ENCRYPTED  0
-#define GZ_FLAGS_RESTRICTED 0
-#define GZ_FLAGS_EXTRA      0
-#define GZ_FLAGS_HEADER_CRC 0
-#define GZ_FLAGS_NAME_TRUNC 0
 
 //wow, I didn't realize tarball headers were so huge
 struct tar_posix_header
 {                                 /* byte offset */
-	char name[100];               /*   0 */
-	char mode[8];                 /* 100 */
-	char uid[8];                  /* 108 */
-	char gid[8];                  /* 116 */
-	char size[12];                /* 124 */
-	char mtime[12];               /* 136 */
-	char chksum[8];               /* 148 */
-	char typeflag;                /* 156 */
-	char linkname[100];           /* 157 */
-	char magic[6];                /* 257 */
-	char version[2];              /* 263 */
-	char uname[32];               /* 265 */
-	char gname[32];               /* 297 */
-	char devmajor[8];             /* 329 */
-	char devminor[8];             /* 337 */
-	char prefix[155];             /* 345 */
+	unsigned char name[100];               /*   0 */
+	unsigned char mode[8];                 /* 100 */
+	unsigned char uid[8];                  /* 108 */
+	unsigned char gid[8];                  /* 116 */
+	unsigned char size[12];                /* 124 */
+	unsigned char mtime[12];               /* 136 */
+	unsigned char chksum[8];               /* 148 */
+	unsigned char typeflag;                /* 156 */
+	unsigned char linkname[100];           /* 157 */
+	unsigned char magic[6];                /* 257 */
+	unsigned char version[2];              /* 263 */
+	unsigned char uname[32];               /* 265 */
+	unsigned char gname[32];               /* 297 */
+	unsigned char devmajor[8];             /* 329 */
+	unsigned char devminor[8];             /* 337 */
+	unsigned char prefix[155];             /* 345 */
 								  /* 500 */
 };
+
+#define GZ_MAGIC 0x8b1f
+#define GZ_METHOD_DEFLATE 0x08
+
+#define GZ_FLAGS_EXT        0x01 // ascii?
+#define GZ_FLAGS_HEADER_CRC 0x02
+#define GZ_FLAGS_EXTRA      0x04
+#define GZ_FLAGS_NAME_TRUNC 0x08
+#define GZ_FLAGS_ENCRYPTED  0x10
+#define GZ_FLAGS_RESTRICTED 0xE0
 
 struct gz_header
 {
@@ -47,9 +52,43 @@ struct gz_header
 };
 
 
+#define ZIP_FILE_MAGIC 0x04034b50
 #define ZIP_CD_MAGIC   0x02014b50
 #define ZIP_EOCD_MAGIC 0x06054b50
 
+struct zip_local_file
+{
+	uint32_t magic;
+	uint16_t min_version;
+	uint16_t flags;
+	uint16_t compression;
+	uint16_t mtime;
+	uint16_t mdate;
+	uint32_t crc32;
+	uint32_t zip_size;
+	uint32_t unzip_size;
+	uint16_t fname_len;
+	uint16_t extra_len;
+	unsigned char *fname;
+	unsigned char *extra;
+};
+
+/*
+Offset 	Bytes 	Description[24]
+0 	4 	Local file header signature = 0x04034b50 (read as a little-endian number)
+4 	2 	Version needed to extract (minimum)
+6 	2 	General purpose bit flag
+8 	2 	Compression method
+10 	2 	File last modification time
+12 	2 	File last modification date
+14 	4 	CRC-32
+18 	4 	Compressed size
+22 	4 	Uncompressed size
+26 	2 	File name length (n)
+28 	2 	Extra field length (m)
+30 	n 	File name
+30+n 	m 	Extra field
+*/
 
 struct zip_directory
 {
@@ -157,14 +196,35 @@ int main(int argc, char **argv)
 			fname[zip_dir.fname_len] = 0;
 			write(1, fname, zip_dir.fname_len);
 			write(1, "\n", 1);
+
+			// jump to the file and extract it
+			int pos = lseek(fd[0], 0, SEEK_CUR);
 			lseek(fd[0], zip_dir.offset, SEEK_SET);
-			unsigned char buffer[zip_dir.zip_size];
+
+			struct zip_local_file file_header;
+			read(fd[0], &file_header, 30);
+			lseek(fd[0], zip_dir.fname_len + file_header.extra_len, SEEK_CUR);
+			unsigned char *buffer;
+			buffer = malloc(zip_dir.zip_size);
 			read(fd[0], buffer, zip_dir.zip_size);
-			int zfd = open(fname, O_WRONLY, 0);
+			int zfd = open(fname, O_WRONLY | O_CREAT, 0);
+
+			struct gz_header gzh;
+			gzh.magic = GZ_MAGIC;
+			gzh.method = GZ_METHOD_DEFLATE;
+			gzh.flags = 0;
+			write(zfd, &gzh, sizeof(struct gz_header)-2);
+
 			write(zfd, buffer, zip_dir.zip_size);
 			close(zfd);
+
+			free(buffer);
+
+			lseek(fd[0], pos, SEEK_SET);
+			// -------------------------------
 		}
 		lseek(fd[0], zip_dir.extra_len + zip_dir.comment_len, SEEK_CUR);
+//		exit(1);
 	}
 
 	write(1, "It's a zip\n", 11);
