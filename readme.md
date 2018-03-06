@@ -51,3 +51,6 @@ benefits of gzipped tarballs is lost. For instance, a tarball of
 multiple files could not be extracted by creating a pipeline of gzip 
 and tar. Additionally, tarballs of gzipped files do not get the benefit 
 of compression accross file boundaries.
+As such, baghand's purpose is mainly academic. It basically exists 
+because it can exist. However, there is always a chance that this tool 
+will have a real practical use to some users.
