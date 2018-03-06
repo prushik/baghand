@@ -297,7 +297,7 @@ int main(int argc, char **argv)
 			gzh.method = GZ_METHOD_DEFLATE;
 			gzh.flags = 0;
 			gzh.os = GZ_OS_LINUX;
-			write(zfd, &gzh, sizeof(struct gz_header)-2);
+			write(zfd, &gzh, sizeof(struct gz_header));
 
 			write(zfd, buffer, zip_dir.zip_size);
 

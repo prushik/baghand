@@ -28,3 +28,26 @@ arguably just a container for deflated data. If one were to accept this
 argument, zip actually becomes an appropriate name for the format.
 That being said, I like reject all arguments. Baghand is the proper 
 name for this tool, and zip is a stupid name.
+
+# justification
+Baghand might seem somewhat pointless, since there exist already 
+programs in common use to extract zip files on all operating systems, 
+which is often what is desired. However, users that prefer command line 
+interfaces often find zip files are less convenient to work with than 
+other formats (such as gzipped tarballs). Baghand can be used to work 
+with zip files without actually extracting the zip file, and instead 
+simply converting it into a more favorable format.
+That being said, the files created by baghand from zip files will 
+likely inherit many of the unfavorable elements of the zip file. Much 
+of the benefit of tarballs over zip files comes from the internal 
+directory structure of the files inside it instead of the format 
+itself, and baghand will not solve this problem as it uses the 
+directory structure from the zip instead. Additionally, baghand does 
+not (currently) create gzipped tarballs (which are the familiar format 
+to many command line users), instead it creates tarballs of gzipped 
+files. Tarballs of gzipped files may be extracted with the same tools 
+as gzipped tarballs (just in a different order), but some of the 
+benefits of gzipped tarballs is lost. For instance, a tarball of 
+multiple files could not be extracted by creating a pipeline of gzip 
+and tar. Additionally, tarballs of gzipped files do not get the benefit 
+of compression accross file boundaries.
