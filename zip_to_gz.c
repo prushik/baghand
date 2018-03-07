@@ -302,7 +302,7 @@ int main(int argc, char **argv)
 			write(zfd, buffer, zip_dir.zip_size);
 
 			struct gz_footer footer = {0};
-			footer.crc = crc32(0, buffer, zip_dir.zip_size);
+			footer.crc = zip_dir.crc32;
 			footer.isize = zip_dir.unzip_size;
 			write(zfd, &footer, 8);
 			close(zfd);
