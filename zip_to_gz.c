@@ -129,15 +129,57 @@ inline int validate_eocd(struct zip_eocd *eocd, uint32_t offset)
 	return (eocd->magic == ZIP_EOCD_MAGIC) && ((offset-23) == eocd->comment_len);
 }
 
+void octal(int n, unsigned char *buffer, int len)
+{
+	int i = 0;
+	while (n)
+	{
+		buffer[len-1-i] = (n & 3) + '0';
+		i++;
+		n = n>>3;
+	}
+}
+
 void tar_write(unsigned char *fname, int zip_fd, int tar_fd, struct zip_directory *dir_entry)
 {
 	struct zip_local_file file_entry;
 	unsigned char *buffer; // used for the compressed file data
+	struct tar_posix_header tar_header = {0};
 	struct gz_header header = {0};
 	struct gz_footer footer = {0};
-	int gz_fd = open(fname, O_WRONLY | O_CREAT, 0);
+	int i;
 	buffer = malloc(dir_entry->zip_size);
 
+	// tar headers
+	if (dir_entry->fname_len < 98)
+		for (i=0; fname[i] != 0; i++)
+				tar_header.name[i] = fname[i];
+	else
+		for (i=0; fname[i] != 0; i++)
+			if (i < 100)
+				tar_header.prefix[i] = fname[i];
+			else
+				tar_header.name[i-100] = fname[i];
+
+	for (i=0; i < 7; i++)
+	{
+		tar_header.mode[i] = '7';
+		tar_header.gid[i] = '0';
+		tar_header.uid[i] = '0';
+		tar_header.mtime[i] = '0';
+	}
+
+	octal(dir_entry->zip_size, tar_header.size, 11);
+
+	tar_header.magic[0] = 'u';
+	tar_header.magic[1] = 's';
+	tar_header.magic[2] = 't';
+	tar_header.magic[3] = 'a';
+	tar_header.magic[4] = 'r';
+	tar_header.magic[5] = ' ';
+	tar_header.magic[6] = ' ';
+
+	// gz headers
 	header.magic = GZ_MAGIC;
 	header.method = GZ_METHOD_DEFLATE;
 	header.flags = 0;
@@ -154,13 +196,11 @@ void tar_write(unsigned char *fname, int zip_fd, int tar_fd, struct zip_director
 	lseek(zip_fd, file_entry.fname_len + file_entry.extra_len, SEEK_CUR);
 	read(zip_fd, buffer, dir_entry->zip_size);
 
-	write(gz_fd, &header, sizeof(struct gz_header));
+	write(tar_fd, &tar_header, sizeof(struct tar_posix_header));
+	write(tar_fd, &header, sizeof(struct gz_header));
+	write(tar_fd, buffer, dir_entry->zip_size);
+	write(tar_fd, &footer, 8);
 
-	write(gz_fd, buffer, dir_entry->zip_size);
-
-	write(gz_fd, &footer, 8);
-
-	close(gz_fd);
 	free(buffer);
 
 	lseek(zip_fd, pos, SEEK_SET);
@@ -212,7 +252,7 @@ int zip_locate_eocd(int zip_fd, struct zip_eocd *zip_footer)
 	while (!validate_eocd(zip_footer, offset))
 	{
 		read(zip_fd, zip_footer, 22);
-		if (!lseek(zip_fd, -23, SEEK_CUR))
+		if (lseek(zip_fd, -23, SEEK_CUR) == -1)
 			return -1;
 		offset += 1;
 	}
@@ -227,19 +267,36 @@ int main(int argc, char **argv)
 	uint32_t offset = 0;
 	unsigned char fname[512];
 
-//	struct stat stats[2];
+	if (argc < 3)
+	{
+		printf("You are not argumentative enough to use this program.\n");
+		exit(1);
+	}
 
 	fd[0] = open(argv[1], O_RDONLY, 0);
-	fd[1] = open(argv[2], O_WRONLY, 0);
+	if (fd[0] == -1)
+	{
+		printf("A zip file is required.\n");
+		exit(1);
+	}
 
-//	fstat(fd[0], &stats[0]);
-//	fstat(fd[1], &stats[1]);
+	fd[1] = open(argv[2], O_WRONLY | O_CREAT, 0);
+	if (fd[1] == -1)
+	{
+		printf("Could not save tar file.\n");
+		exit(1);
+	}
 
 	struct zip_directory zip_dir = {0};
 	struct zip_eocd zip_footer = {0};
 
 	// Locate the End of Central Directory header (located at the end of the file)
 	offset = zip_locate_eocd(fd[0], &zip_footer);
+	if (offset == -1)
+	{
+		printf("This does not appear to be a zip file.\n");
+		exit(1);
+	}
 
 	// Jump to the beginning of the Central Directories
 	lseek(fd[0], zip_footer.central_dir_offset, SEEK_SET);
@@ -258,12 +315,15 @@ int main(int argc, char **argv)
 			write(1, fname, zip_dir.fname_len);
 			write(1, ".gz\n", 4);
 
-			gz_create(fname, fd[0], &zip_dir);
+			tar_write(fname, fd[0], fd[1], &zip_dir);
 
 			// -------------------------------
 		}
 		lseek(fd[0], zip_dir.extra_len + zip_dir.comment_len, SEEK_CUR);
-//		exit(1);
 	}
+	close(fd[0]);
+	close(fd[1]);
+
+	exit(0);
 }
 
