@@ -11,26 +11,26 @@
 #include <fcntl.h>
 
 
-//wow, I didn't realize tarball headers were so huge
+//wow, I didn't realize tarball headers were so huge, or all in ascii...
 struct tar_posix_header
-{                                 /* byte offset */
-	unsigned char name[100];               /*   0 */
-	unsigned char mode[8];                 /* 100 */
-	unsigned char uid[8];                  /* 108 */
-	unsigned char gid[8];                  /* 116 */
-	unsigned char size[12];                /* 124 */
-	unsigned char mtime[12];               /* 136 */
-	unsigned char chksum[8];               /* 148 */
-	unsigned char typeflag;                /* 156 */
-	unsigned char linkname[100];           /* 157 */
-	unsigned char magic[6];                /* 257 */
-	unsigned char version[2];              /* 263 */
-	unsigned char uname[32];               /* 265 */
-	unsigned char gname[32];               /* 297 */
-	unsigned char devmajor[8];             /* 329 */
-	unsigned char devminor[8];             /* 337 */
-	unsigned char prefix[155];             /* 345 */
-								  /* 500 */
+{
+	unsigned char name[100];
+	unsigned char mode[8];
+	unsigned char uid[8];
+	unsigned char gid[8];
+	unsigned char size[12];
+	unsigned char mtime[12];
+	unsigned char chksum[8];
+	unsigned char typeflag;
+	unsigned char linkname[100];
+	unsigned char magic[6];
+	unsigned char version[2];
+	unsigned char uname[32];
+	unsigned char gname[32];
+	unsigned char devmajor[8];
+	unsigned char devminor[8];
+	unsigned char prefix[155];
+	unsigned char pad[12];
 };
 
 #define GZ_MAGIC 0x8b1f
@@ -94,7 +94,7 @@ struct zip_directory
 	uint16_t compression;
 	uint16_t mtime;
 	uint16_t mdate;
-	uint32_t crc32; // padding is the problem here...
+	uint32_t crc32;
 	uint32_t zip_size;
 	uint32_t unzip_size;
 	uint16_t fname_len;
@@ -132,13 +132,15 @@ inline int validate_eocd(struct zip_eocd *eocd, uint32_t offset)
 void octal(int n, unsigned char *buffer, int len)
 {
 	int i = 0;
-	while (n)
+	while (i<len)
 	{
 		buffer[len-1-i] = (n & 7) + '0';
 		i++;
 		n = n>>3;
 	}
 }
+
+static unsigned char padding[512] = {0};
 
 void tar_set_checksum(struct tar_posix_header *header)
 {
@@ -151,10 +153,8 @@ void tar_set_checksum(struct tar_posix_header *header)
 	for (i=0;i<sizeof(struct tar_posix_header); i++)
 		sum += header_data[i];
 
-	for (i=0; i<8; i++)
-		header->chksum[i] = '0';
-
-	octal(sum, header->chksum, 8);
+	octal(sum, header->chksum, 6);
+	header->chksum[6] = '\0';
 }
 
 void tar_write(unsigned char *fname, int zip_fd, int tar_fd, struct zip_directory *dir_entry)
@@ -180,7 +180,7 @@ void tar_write(unsigned char *fname, int zip_fd, int tar_fd, struct zip_director
 
 	for (i=0; i < 7; i++)
 	{
-		tar_header.mode[i] = '7';
+		tar_header.mode[i] = '0';
 		tar_header.gid[i] = '0';
 		tar_header.uid[i] = '0';
 		tar_header.mtime[i] = '0';
@@ -188,7 +188,7 @@ void tar_write(unsigned char *fname, int zip_fd, int tar_fd, struct zip_director
 	}
 	tar_header.typeflag = '0';
 
-	octal(dir_entry->zip_size, tar_header.size, 11);
+	octal(dir_entry->zip_size + sizeof(struct gz_header) + 8, tar_header.size, 11);
 
 	tar_header.magic[0] = 'u';
 	tar_header.magic[1] = 's';
@@ -223,6 +223,7 @@ void tar_write(unsigned char *fname, int zip_fd, int tar_fd, struct zip_director
 	write(tar_fd, &header, sizeof(struct gz_header));
 	write(tar_fd, buffer, dir_entry->zip_size);
 	write(tar_fd, &footer, 8);
+	write(tar_fd, padding, 512 - ((sizeof(struct tar_posix_header) + sizeof(struct gz_header) + dir_entry->zip_size + 8) % 512));
 
 	free(buffer);
 

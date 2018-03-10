@@ -3,6 +3,8 @@ A simple command-line tool for converting between zip format and
 tarballs of gzipped files, accomplished without any compressing or 
 decompressing.
 
+=====
+
 # naming
 Baghand is stupidly named, this is intentional. The name comes from the 
 fact that "zip" is (in my opinion) a terrible name. Zip and compression 
@@ -54,3 +56,18 @@ of compression accross file boundaries.
 As such, baghand's purpose is mainly academic. It basically exists 
 because it can exist. However, there is always a chance that this tool 
 will have a real practical use to some users.
+
+# future
+In the future, baghand might be able to convert from gz.tar to zip as 
+well. However, the most interesting potential future feature would be 
+converting a zip file into a complete gzipped tarball. I believe that 
+there is a good chance this is possible (depending entirely on existing 
+tar implementations). This would work by simply marking all generated 
+headers as "stored" (a non-compressed type of block in a deflate 
+stream), appending the file data to each header, and then joining all 
+files together as separate gzip files concatenated together. Any tar 
+implementation that calls the external program gzip to decompress 
+should theoretically be able to decompressgzipped tarballs produced in 
+this way, but there could be an issue if implementations exist that 
+reimplement the gzip program's functionality and do not support 
+concatenated gz files.
