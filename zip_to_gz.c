@@ -134,10 +134,27 @@ void octal(int n, unsigned char *buffer, int len)
 	int i = 0;
 	while (n)
 	{
-		buffer[len-1-i] = (n & 3) + '0';
+		buffer[len-1-i] = (n & 7) + '0';
 		i++;
 		n = n>>3;
 	}
+}
+
+void tar_set_checksum(struct tar_posix_header *header)
+{
+	uint32_t sum = 0;
+	int i;
+	unsigned char *header_data = (unsigned char *)header;
+	for (i=0; i<8; i++)
+		header->chksum[i] = ' ';
+
+	for (i=0;i<sizeof(struct tar_posix_header); i++)
+		sum += header_data[i];
+
+	for (i=0; i<8; i++)
+		header->chksum[i] = '0';
+
+	octal(sum, header->chksum, 8);
 }
 
 void tar_write(unsigned char *fname, int zip_fd, int tar_fd, struct zip_directory *dir_entry)
@@ -167,7 +184,9 @@ void tar_write(unsigned char *fname, int zip_fd, int tar_fd, struct zip_director
 		tar_header.gid[i] = '0';
 		tar_header.uid[i] = '0';
 		tar_header.mtime[i] = '0';
+		tar_header.chksum[i] = '0';
 	}
+	tar_header.typeflag = '0';
 
 	octal(dir_entry->zip_size, tar_header.size, 11);
 
@@ -178,6 +197,10 @@ void tar_write(unsigned char *fname, int zip_fd, int tar_fd, struct zip_director
 	tar_header.magic[4] = 'r';
 	tar_header.magic[5] = ' ';
 	tar_header.magic[6] = ' ';
+//	tar_header.version[0] = '0';
+//	tar_header.version[1] = '0';
+
+	tar_set_checksum(&tar_header);
 
 	// gz headers
 	header.magic = GZ_MAGIC;
