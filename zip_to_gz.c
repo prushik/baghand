@@ -37,7 +37,6 @@ struct tar_posix_header
 #define GZ_METHOD_DEFLATE 0x08
 #define GZ_OS_LINUX 0x03
 
-
 #define GZ_FLAGS_TEXT       0x01 // ascii?
 #define GZ_FLAGS_HEADER_CRC 0x02
 #define GZ_FLAGS_EXTRA      0x04
@@ -60,7 +59,6 @@ struct gz_footer
 	uint32_t crc;
 	uint32_t isize;
 };
-
 
 #define ZIP_FILE_MAGIC 0x04034b50
 #define ZIP_ALG_STORE 0
@@ -129,18 +127,15 @@ inline int validate_eocd(struct zip_eocd *eocd, uint32_t offset)
 	return (eocd->magic == ZIP_EOCD_MAGIC) && ((offset-23) == eocd->comment_len);
 }
 
+// This function fills buffer with an ascii encoded octal string representing n
 void octal(int n, unsigned char *buffer, int len)
 {
 	int i = 0;
-	while (i<len)
-	{
+	for (i = 0; i < len; i++, n = n >> 3)
 		buffer[len-1-i] = (n & 7) + '0';
-		i++;
-		n = n>>3;
-	}
 }
 
-static unsigned char padding[512] = {0};
+static const unsigned char padding[512] = {0};
 
 void tar_set_checksum(struct tar_posix_header *header)
 {
@@ -155,6 +150,11 @@ void tar_set_checksum(struct tar_posix_header *header)
 
 	octal(sum, header->chksum, 6);
 	header->chksum[6] = '\0';
+}
+
+inline uint32_t tar_entry_size(uint32_t file_size, uint8_t deflated)
+{
+	return file_size + (deflated ? (sizeof(struct gz_header) + sizeof(struct gz_footer)) : 0);
 }
 
 void tar_write(unsigned char *fname, int zip_fd, int tar_fd, struct zip_directory *dir_entry)
@@ -173,10 +173,10 @@ void tar_write(unsigned char *fname, int zip_fd, int tar_fd, struct zip_director
 				tar_header.name[i] = fname[i];
 	else
 		for (i=0; fname[i] != 0; i++)
-			if (i < 100)
+			if (i < 155)
 				tar_header.prefix[i] = fname[i];
 			else
-				tar_header.name[i-100] = fname[i];
+				tar_header.name[i-155] = fname[i];
 
 	for (i=0; i < 7; i++)
 	{
@@ -184,11 +184,10 @@ void tar_write(unsigned char *fname, int zip_fd, int tar_fd, struct zip_director
 		tar_header.gid[i] = '0';
 		tar_header.uid[i] = '0';
 		tar_header.mtime[i] = '0';
-		tar_header.chksum[i] = '0';
 	}
 	tar_header.typeflag = '0';
 
-	octal(dir_entry->zip_size + sizeof(struct gz_header) + 8, tar_header.size, 11);
+	octal(tar_entry_size(dir_entry->zip_size, dir_entry->compression == ZIP_ALG_DEFLATE), tar_header.size, 11);
 
 	tar_header.magic[0] = 'u';
 	tar_header.magic[1] = 's';
@@ -220,10 +219,17 @@ void tar_write(unsigned char *fname, int zip_fd, int tar_fd, struct zip_director
 	read(zip_fd, buffer, dir_entry->zip_size);
 
 	write(tar_fd, &tar_header, sizeof(struct tar_posix_header));
-	write(tar_fd, &header, sizeof(struct gz_header));
-	write(tar_fd, buffer, dir_entry->zip_size);
-	write(tar_fd, &footer, 8);
-	write(tar_fd, padding, 512 - ((sizeof(struct tar_posix_header) + sizeof(struct gz_header) + dir_entry->zip_size + 8) % 512));
+	if (dir_entry->compression == ZIP_ALG_DEFLATE)
+	{
+		write(tar_fd, &header, sizeof(struct gz_header));
+		write(tar_fd, buffer, dir_entry->zip_size);
+		write(tar_fd, &footer, sizeof(struct gz_footer));
+	}
+	else if (dir_entry->compression == ZIP_ALG_STORE)
+	{
+		write(tar_fd, buffer, dir_entry->zip_size);
+	}
+	write(tar_fd, padding, 512 - ((sizeof(struct tar_posix_header) + tar_entry_size(dir_entry->zip_size, dir_entry->compression == ZIP_ALG_DEFLATE)) % 512));
 
 	free(buffer);
 
@@ -332,15 +338,22 @@ int main(int argc, char **argv)
 		if (zip_dir.magic == ZIP_CD_MAGIC) // Just for sanity
 		{
 			read(fd[0], &fname, zip_dir.fname_len);
-			fname[zip_dir.fname_len+0] = '.';
-			fname[zip_dir.fname_len+1] = 'g';
-			fname[zip_dir.fname_len+2] = 'z';
-			fname[zip_dir.fname_len+3] = 0;
+
+			if (zip_dir.compression == ZIP_ALG_DEFLATE)
+			{
+				fname[zip_dir.fname_len+0] = '.';
+				fname[zip_dir.fname_len+1] = 'g';
+				fname[zip_dir.fname_len+2] = 'z';
+				fname[zip_dir.fname_len+3] = 0;
+			}
+			else if (zip_dir.compression == ZIP_ALG_STORE)
+			{
+				fname[zip_dir.fname_len] = 0;
+			}
 			write(1, fname, zip_dir.fname_len);
 			write(1, ".gz\n", 4);
 
 			tar_write(fname, fd[0], fd[1], &zip_dir);
-
 			// -------------------------------
 		}
 		lseek(fd[0], zip_dir.extra_len + zip_dir.comment_len, SEEK_CUR);
