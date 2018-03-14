@@ -138,7 +138,7 @@ void usage()
 	write(1, "\n", 1);
 	write(1, "Options:\n", 9);
 	write(1, "\t-c \t tar mode. Create a tarball of gzipped files. [default]\n", 61);
-	write(1, "\t-t \t tar.gz mode. Create a gzipped tarball.\n", 45);
+	write(1, "\t-z \t tar.gz mode. Create a gzipped tarball.\n", 45);
 	write(1, "\t-x \t extract mode. Extract the files to gzipped files.\n", 56);
 }
 
@@ -146,7 +146,7 @@ void usage()
 // -------------------RFC1952 CRC code--------------------------
 
 /* Table of CRCs of all 8-bit messages. */
-unsigned long crc_table[256];
+static uint32_t crc_table[256];
 
 /* Flag: has the table been computed? Initially false. */
 int crc_table_computed = 0;
@@ -183,7 +183,7 @@ function so it shouldn't be done by the caller. Usage example:
  }
  if (crc != original_crc) error();
 */
-unsigned long update_crc(uint32_t crc,
+uint32_t update_crc(uint32_t crc,
 			  unsigned char *buf, int len)
 {
 	uint32_t c = crc ^ 0xffffffffL;
@@ -328,9 +328,10 @@ void tgz_write(unsigned char *fname, int zip_fd, int tar_fd, struct zip_director
 	int i;
 	struct zip_local_file file_entry;
 	unsigned char *buffer; // used for the compressed file data
-	struct tar_posix_header tar_header = {0};
+	struct deflate_store_header store_header = {0};
 	struct gz_header header = {0};
 	struct gz_footer footer = {0};
+	struct tar_posix_header tar_header = {0};
 	buffer = malloc(dir_entry->zip_size);
 
 	// tar headers
@@ -353,7 +354,7 @@ void tgz_write(unsigned char *fname, int zip_fd, int tar_fd, struct zip_director
 	}
 	tar_header.typeflag = '0';
 
-	octal(tar_entry_size(dir_entry->zip_size, dir_entry->compression == ZIP_ALG_DEFLATE), tar_header.size, 11);
+	octal(tar_entry_size(dir_entry->unzip_size, dir_entry->compression == ZIP_ALG_DEFLATE), tar_header.size, 11);
 
 	tar_header.magic[0] = 'u';
 	tar_header.magic[1] = 's';
@@ -373,8 +374,8 @@ void tgz_write(unsigned char *fname, int zip_fd, int tar_fd, struct zip_director
 	header.flags = 0;
 	header.os = GZ_OS_LINUX;
 
-	footer.crc = dir_entry->crc32;
-	footer.isize = dir_entry->unzip_size;
+	footer.crc = update_crc(dir_entry->crc32, &tar_header, sizeof(struct tar_posix_header));
+	footer.isize = dir_entry->unzip_size + sizeof(struct tar_posix_header);
 
 	// jump to the file and extract it
 	int pos = lseek(zip_fd, 0, SEEK_CUR);
@@ -384,18 +385,33 @@ void tgz_write(unsigned char *fname, int zip_fd, int tar_fd, struct zip_director
 	lseek(zip_fd, file_entry.fname_len + file_entry.extra_len, SEEK_CUR);
 	read(zip_fd, buffer, dir_entry->zip_size);
 
+	write(tar_fd, &header, sizeof(struct gz_header));
+
+	store_header.block_size = sizeof(struct tar_posix_header);
+	store_header.inverse_size = ~store_header.block_size;
+	write(tar_fd, &store_header, sizeof(struct deflate_store_header));
+
 	write(tar_fd, &tar_header, sizeof(struct tar_posix_header));
 	if (dir_entry->compression == ZIP_ALG_DEFLATE)
 	{
-		write(tar_fd, &header, sizeof(struct gz_header));
 		write(tar_fd, buffer, dir_entry->zip_size);
-		write(tar_fd, &footer, sizeof(struct gz_footer));
 	}
 	else if (dir_entry->compression == ZIP_ALG_STORE)
 	{
 		write(tar_fd, buffer, dir_entry->zip_size);
 	}
-	write(tar_fd, padding, 512 - ((sizeof(struct tar_posix_header) + tar_entry_size(dir_entry->zip_size, dir_entry->compression == ZIP_ALG_DEFLATE)) % 512));
+	write(tar_fd, &footer, sizeof(struct gz_footer));
+
+	write(tar_fd, &header, sizeof(struct gz_header));
+	store_header.block_size = 512 - ((sizeof(struct tar_posix_header) + tar_entry_size(dir_entry->unzip_size, 0)) % 512);
+	store_header.inverse_size = ~store_header.block_size;
+	write(tar_fd, &store_header, sizeof(struct deflate_store_header));
+
+	write(tar_fd, padding, 512 - ((sizeof(struct tar_posix_header) + tar_entry_size(dir_entry->unzip_size, 0)) % 512));
+
+	footer.crc = update_crc(0, padding, 512 - ((sizeof(struct tar_posix_header) + tar_entry_size(dir_entry->unzip_size, 0)) % 512));
+	footer.isize = 512 - ((sizeof(struct tar_posix_header) + tar_entry_size(dir_entry->unzip_size, 0)) % 512);
+	write(tar_fd, &footer, sizeof(struct gz_footer));
 
 	free(buffer);
 
