@@ -1,6 +1,5 @@
 // Baghand - zip to gz.tar converter. Converts a zip file to a tarball of gzipped files without decompressing anything.
 
-
 #include <stdio.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -9,7 +8,6 @@
 #include <sys/mman.h>
 #include <unistd.h>
 #include <fcntl.h>
-
 
 //wow, I didn't realize tarball headers were so huge, or all in ascii...
 struct tar_posix_header
@@ -246,12 +244,12 @@ inline uint32_t tar_entry_size(uint32_t file_size, uint8_t deflated)
 
 void tar_write(unsigned char *fname, int zip_fd, int tar_fd, struct zip_directory *dir_entry)
 {
+	int i;
 	struct zip_local_file file_entry;
 	unsigned char *buffer; // used for the compressed file data
 	struct tar_posix_header tar_header = {0};
 	struct gz_header header = {0};
 	struct gz_footer footer = {0};
-	int i;
 	buffer = malloc(dir_entry->zip_size);
 
 	// tar headers
@@ -376,6 +374,8 @@ void tgz_write(unsigned char *fname, int zip_fd, int tar_fd, struct zip_director
 
 	footer.crc = update_crc(dir_entry->crc32, &tar_header, sizeof(struct tar_posix_header));
 	footer.isize = dir_entry->unzip_size + sizeof(struct tar_posix_header);
+	printf("Orig CRC: %x\n", dir_entry->crc32);
+	printf("New CRC: %x\n", footer.crc);
 
 	// jump to the file and extract it
 	int pos = lseek(zip_fd, 0, SEEK_CUR);
@@ -392,26 +392,28 @@ void tgz_write(unsigned char *fname, int zip_fd, int tar_fd, struct zip_director
 	write(tar_fd, &store_header, sizeof(struct deflate_store_header));
 
 	write(tar_fd, &tar_header, sizeof(struct tar_posix_header));
-	if (dir_entry->compression == ZIP_ALG_DEFLATE)
+	if (dir_entry->compression == ZIP_ALG_STORE)
 	{
-		write(tar_fd, buffer, dir_entry->zip_size);
+		// need to make this into gzip format...
 	}
-	else if (dir_entry->compression == ZIP_ALG_STORE)
-	{
-		write(tar_fd, buffer, dir_entry->zip_size);
-	}
+	write(tar_fd, buffer, dir_entry->zip_size);
 	write(tar_fd, &footer, sizeof(struct gz_footer));
 
-	write(tar_fd, &header, sizeof(struct gz_header));
-	store_header.block_size = 512 - ((sizeof(struct tar_posix_header) + tar_entry_size(dir_entry->unzip_size, 0)) % 512);
-	store_header.inverse_size = ~store_header.block_size;
-	write(tar_fd, &store_header, sizeof(struct deflate_store_header));
+	uint16_t pad_bytes = 512 - ((sizeof(struct tar_posix_header) + tar_entry_size(dir_entry->unzip_size, 0)) % 512);
+	if (pad_bytes) // only create this if the tar entry needs padding
+	{
+		write(tar_fd, &header, sizeof(struct gz_header));
+		store_header.method = 4; // mark as a final block
+		store_header.block_size = pad_bytes;
+		store_header.inverse_size = ~store_header.block_size;
+		write(tar_fd, &store_header, sizeof(struct deflate_store_header));
 
-	write(tar_fd, padding, 512 - ((sizeof(struct tar_posix_header) + tar_entry_size(dir_entry->unzip_size, 0)) % 512));
+		write(tar_fd, padding, pad_bytes);
 
-	footer.crc = update_crc(0, padding, 512 - ((sizeof(struct tar_posix_header) + tar_entry_size(dir_entry->unzip_size, 0)) % 512));
-	footer.isize = 512 - ((sizeof(struct tar_posix_header) + tar_entry_size(dir_entry->unzip_size, 0)) % 512);
-	write(tar_fd, &footer, sizeof(struct gz_footer));
+		footer.crc = update_crc(0, padding, pad_bytes);
+		footer.isize = pad_bytes;
+		write(tar_fd, &footer, sizeof(struct gz_footer));
+	}
 
 	free(buffer);
 
@@ -560,7 +562,7 @@ int main(int argc, char **argv)
 			read(fd[0], &fname, zip_dir.fname_len);
 
 			write(1, fname, zip_dir.fname_len);
-			if (zip_dir.compression == ZIP_ALG_DEFLATE)
+			if (zip_dir.compression == ZIP_ALG_DEFLATE && method != BH_MODE_MAKE_TGZ)
 			{
 				fname[zip_dir.fname_len+0] = '.';
 				fname[zip_dir.fname_len+1] = 'g';
@@ -568,7 +570,7 @@ int main(int argc, char **argv)
 				fname[zip_dir.fname_len+3] = 0;
 				write(1, ".gz\n", 4);
 			}
-			else if (zip_dir.compression == ZIP_ALG_STORE)
+			else if (zip_dir.compression == ZIP_ALG_STORE || method == BH_MODE_MAKE_TGZ)
 			{
 				fname[zip_dir.fname_len] = 0;
 				write(1, "\n", 1);
